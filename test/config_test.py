@@ -50,7 +50,7 @@ class ConfigTest(unittest2.TestCase):
     def test_read_hdfs_config_umask(self):
         hdfs_site_path = self.get_config_path('umask-hdfs-site.xml')
         config = HDFSConfig.read_hdfs_config(hdfs_site_path)
-        self.assertEqual(config['umasks'],'077')
+        self.assertEqual(config['umask'],'077')
 
     def test_read_core_config_ha(self):
         core_site_path = self.get_config_path('ha-core-site.xml')
