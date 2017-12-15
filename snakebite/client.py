@@ -88,7 +88,7 @@ class Client(object):
 
     def __init__(self, host, port=Namenode.DEFAULT_PORT, hadoop_version=Namenode.DEFAULT_VERSION,
                  use_trash=False, effective_user=None, use_sasl=False, hdfs_namenode_principal=None,
-                 sock_connect_timeout=10000, sock_request_timeout=10000, use_datanode_hostname=False):
+                 sock_connect_timeout=10000, sock_request_timeout=10000, use_datanode_hostname=False, umask=0o022):
         '''
         :param host: Hostname or IP address of the NameNode
         :type host: string
@@ -110,6 +110,8 @@ class Client(object):
         :type sock_request_timeout: int
         :param use_datanode_hostname: Use hostname instead of IP address to commuicate with datanodes
         :type use_datanode_hostname: boolean
+        :param umask: The umask to use. Default value 0x022
+        :type umask: int
         '''
         if hadoop_version < 9:
             raise FatalException("Only protocol versions >= 9 supported")
@@ -126,6 +128,7 @@ class Client(object):
         self.trash = self._join_user_path(".Trash")
         self._server_defaults = None
         self.use_datanode_hostname = use_datanode_hostname
+        self.umask = umask
 
         log.debug("Created client for %s:%s with trash=%s and sasl=%s" % (host, port, use_trash, use_sasl))
 
@@ -593,7 +596,7 @@ class Client(object):
 
         return self._handle_delete(path, node, recurse=True)
 
-    def touchz(self, paths, replication=None, blocksize=None):
+    def touchz(self, paths, replication=None, blocksize=None, mode=None):
         ''' Create a zero length file or updates the timestamp on a zero length file
 
         :param paths: Paths
@@ -602,6 +605,8 @@ class Client(object):
         :type recurse: int
         :param blocksize: Block size (in bytes) of the newly created file
         :type blocksize: int
+        :param mode: The file mode
+        :type mode: int
         :returns: a generator that yields dictionaries
         '''
 
@@ -619,13 +624,15 @@ class Client(object):
             replication = defaults['replication']
         if not blocksize:
             blocksize = defaults['blockSize']
+        if not mode:
+            mode = 0o666 & ~ self.umask
 
-        processor = lambda path, node, replication=replication, blocksize=blocksize: self._handle_touchz(path, node, replication, blocksize)
+        processor = lambda path, node, replication=replication, blocksize=blocksize: self._handle_touchz(path, node, replication, blocksize, mode)
         for item in self._find_items(paths, processor, include_toplevel=True, check_nonexistence=True, include_children=False):
             if item:
                 yield item
 
-    def _handle_touchz(self, path, node, replication, blocksize):
+    def _handle_touchz(self, path, node, replication, blocksize, mode):
         # Item already exists
         if node:
             if node.length != 0:
@@ -633,14 +640,14 @@ class Client(object):
             if self._is_dir(node):
                 raise DirectoryException("touchz: `%s': Is a directory" % path)
 
-            response = self._create_file(path, replication, blocksize, overwrite=True)
+            response = self._create_file(path, replication, blocksize, overwrite=True, mode=mode)
         else:
             # Check if the parent directory exists
             parent = self._get_file_info(posixpath.dirname(path))
             if not parent:
                 raise DirectoryException("touchz: `%s': No such file or directory" % path)
             else:
-                response = self._create_file(path, replication, blocksize, overwrite=False)
+                response = self._create_file(path, replication, blocksize, overwrite=False, mode=mode)
         return {"path": path, "result": response.result}
 
     def setrep(self, paths, replication, recurse=False):
@@ -988,7 +995,7 @@ class Client(object):
         else:
             return text
 
-    def mkdir(self, paths, create_parent=False, mode=0o755):
+    def mkdir(self, paths, create_parent=False, mode=None):
         ''' Create a directoryCount
 
         :param paths: Paths to create
@@ -1003,6 +1010,9 @@ class Client(object):
             raise InvalidInputException("Paths should be a list")
         if not paths:
             raise InvalidInputException("mkdirs: no path given")
+
+        if not mode:
+            mode = 0o777 & ~self.umask
 
         for path in paths:
             if not path.startswith("/"):
@@ -1069,7 +1079,7 @@ class Client(object):
         else:
             return path
 
-    def _create_file(self, path, replication, blocksize, overwrite):
+    def _create_file(self, path, replication, blocksize, overwrite, mode):
         if overwrite:
             createFlag = 0x02
         else:
@@ -1078,7 +1088,7 @@ class Client(object):
         # Issue a CreateRequestProto
         request = client_proto.CreateRequestProto()
         request.src = path
-        request.masked.perm = 0o644
+        request.masked.perm = mode
         request.clientName = "snakebite"
         request.createFlag = createFlag
         request.createParent = False
@@ -1388,7 +1398,7 @@ class HAClient(Client):
 
     def __init__(self, namenodes, use_trash=False, effective_user=None, use_sasl=False, hdfs_namenode_principal=None,
                  max_failovers=15, max_retries=10, base_sleep=500, max_sleep=15000, sock_connect_timeout=10000,
-                 sock_request_timeout=10000, use_datanode_hostname=False):
+                 sock_request_timeout=10000, use_datanode_hostname=False, umask=0o022):
         '''
         :param namenodes: Set of namenodes for HA setup
         :type namenodes: list
@@ -1426,6 +1436,7 @@ class HAClient(Client):
         self.sock_connect_timeout = sock_connect_timeout
         self.sock_request_timeout = sock_request_timeout
         self.use_datanode_hostname = use_datanode_hostname
+        self.umask = umask
 
         self.failovers = -1
         self.retries = -1
@@ -1465,7 +1476,8 @@ class HAClient(Client):
                                                      self.hdfs_namenode_principal,
                                                      self.sock_connect_timeout,
                                                      self.sock_request_timeout,
-                                                     self.use_datanode_hostname)
+                                                     self.use_datanode_hostname,
+                                                     self.umask)
 
 
     def __calculate_exponential_time(self, time, retries, cap):
@@ -1586,4 +1598,5 @@ class AutoConfigClient(HAClient):
                                                configs.get('failover_max_attempts'), configs.get('client_retries'),
                                                configs.get('client_sleep_base_millis'), configs.get('client_sleep_max_millis'),
                                                10000, configs.get('socket_timeout_millis'),
-                                               use_datanode_hostname=configs.get('use_datanode_hostname', False))
+                                               use_datanode_hostname=configs.get('use_datanode_hostname', False),
+                                               umask=configs.get('umask', 0o022))

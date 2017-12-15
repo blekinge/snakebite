@@ -116,6 +116,9 @@ class HDFSConfig(object):
             if property.findall('name')[0].text == 'dfs.client.use.datanode.hostname':
                 configs['use_datanode_hostname'] = bool(property.findall('value')[0].text)
 
+            if property.findall('name')[0].text == 'fs.permissions.umask-mode':
+                configs['umask'] = int(property.findall('value')[0].text, 8)
+
         if namenodes:
             configs['namenodes'] = namenodes
 
