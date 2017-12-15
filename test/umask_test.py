@@ -33,7 +33,8 @@ class UmaskTest(MiniClusterTestBase):
         result = all([ r['result'] for r in self.client.touchz([f1]) ])
         self.assertTrue(result)
         perm = self.cluster.ls([f1])[0]['permission']
-        self.assertEqual(perm, 0o666 & ~self.client.umask)
+        # 0o600 == 0o666 & ~self.client.umask
+        self.assertEqual(perm, 0o600)
 
     def test_touchz_mkdir(self):
         parent_dir = '/'
@@ -41,4 +42,5 @@ class UmaskTest(MiniClusterTestBase):
         result = all([ r['result'] for r in self.client.mkdir([d1]) ])
         self.assertTrue(result)
         perms = [entry['permission'] for entry in self.cluster.ls([parent_dir]) if entry['path'] == d1]
-        self.assertEqual(perms[0], 0o777 & ~self.client.umask)
+        # 0o700 == 0o777 & ~self.client.umask
+        self.assertEqual(perms[0], 0o700)
